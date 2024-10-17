@@ -1,3 +1,14 @@
+"""
+
+elections_scraper.py: třetí projekt do Engeto Online Python Akademie
+
+author: Radka Štorchová
+
+email: r.storchova@gmail.com
+
+discord: radkastorchova
+
+"""
 #importing libraries
 import requests
 from bs4 import BeautifulSoup
