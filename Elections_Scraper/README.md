@@ -21,6 +21,7 @@ You can install the dependencies using `pip`:
 
 ```bash
 pip install beautifulsoup4 requests
+```
 or
 ```
 pip install -r requirements.txt
