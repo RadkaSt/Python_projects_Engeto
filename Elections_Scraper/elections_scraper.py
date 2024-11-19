@@ -9,126 +9,155 @@ email: r.storchova@gmail.com
 discord: radkastorchova
 
 """
-#importing libraries
-import requests
-from bs4 import BeautifulSoup
 import csv
+import requests
 import sys
-import re
-
-
-def get_soup(url):
-    """
-    Stáhne webovou stránku a vytvoří objekt BeautifulSoup pro parsování HTML.
-
-    :param url: URL adresa stránky ke stažení
-    :return: Objekt BeautifulSoup
-    """
-    response = requests.get(url)
-    return BeautifulSoup(response.text, 'html.parser')
-
-
-def scrape_results(url):
-    """
-    Scrapuje výsledky voleb pro jednu obec.
-
-    :param url: URL adresa stránky s výsledky pro obec
-    :return: Seznam výsledků pro danou obec
-    """
-    soup = get_soup(url)
-    results = []
-
-    # Získání názvu obce
-    obec_name = soup.find('h3').text.strip()
-
-    # Nalezení všech tabulek na stránce
-    tables = soup.find_all('table')
-
-    # Získání dat o volební účasti
-    turnout_data = tables[0].find_all('td')
-    registered = turnout_data[3].text.strip()  # Počet registrovaných voličů
-    envelopes = turnout_data[4].text.strip()  # Počet vydaných obálek
-    valid_votes = turnout_data[7].text.strip()  # Počet platných hlasů
-
-    # Scrapování výsledků pro jednotlivé strany
-    for row in tables[1].find_all('tr')[2:]:  # Přeskočení prvních dvou řádků (záhlaví)
-        cells = row.find_all('td')
-        if len(cells) > 0:
-            party = cells[1].text.strip()  # Název strany
-            votes = cells[2].text.strip()  # Počet hlasů pro stranu
-            results.append([obec_name, registered, envelopes, valid_votes, party, votes])
-
-    return results
-
-
-def scrape_district(url):
-    """
-    Scrapuje výsledky voleb pro celý okres.
-
-    :param url: URL adresa stránky s přehledem obcí v okrese
-    :return: Seznam výsledků pro všechny obce v okrese
-    """
-    soup = get_soup(url)
-    all_results = []
-
-    # Procházení všech řádků tabulky s obcemi
-    for row in soup.find('table', {'class': 'table'}).find_all('tr')[2:]:
-        cells = row.find_all('td')
-        if len(cells) > 0:
-            # Sestavení URL pro detail obce
-            link = 'https://www.volby.cz/pls/ps2017nss/' + cells[0].find('a')['href']
-            all_results.extend(scrape_results(link))
-
-    return all_results
-
-
-def is_valid_url(url):
-    """
-    Kontroluje, zda zadaná URL odpovídá očekávanému formátu pro stránky s volebními výsledky.
-
-    :param url: URL adresa ke kontrole
-    :return: True, pokud je URL platná, jinak False
-    """
-    pattern = r'^https://www\.volby\.cz/pls/ps2017nss/ps32\?xjazyk=CZ&xkraj=\d+&xnumnuts=\d+'
-    return re.match(pattern, url) is not None
+from bs4 import BeautifulSoup
 
 
 def main():
     """
-    Hlavní funkce skriptu. Zpracovává argumenty příkazové řádky, 
-    spouští scrapování a ukládá výsledky do CSV souboru.
+    Main function to coordinate the entire process:
+    - Validate input arguments
+    - Scrape data from a given URL
+    - Save results to a CSV file
     """
-    # Kontrola počtu argumentů
-    if len(sys.argv) != 3:
-        print("Chyba: Prosím, zadejte dva argumenty - URL a název výstupního souboru.")
-        print(
-            "Příklad: python script.py https://www.volby.cz/pls/ps2017nss/ps32?xjazyk=CZ&xkraj=12&xnumnuts=7103 vysledky_prostejov.csv")
-        sys.exit(1)
-
+    base_url = "https://www.volby.cz/pls/ps2017nss/"
+    validate_inputs(base_url)
     url = sys.argv[1]
-    output_file = sys.argv[2]
-
-    # Kontrola platnosti URL
-    if not is_valid_url(url):
-        print("Chyba: Neplatná URL. Prosím, zadejte platnou URL pro územní celek.")
-        sys.exit(1)
-
-    # Kontrola přípony výstupního souboru
-    if not output_file.endswith('.csv'):
-        print("Chyba: Výstupní soubor musí mít příponu .csv")
-        sys.exit(1)
-
-    # Scrapování výsledků
-    results = scrape_district(url)
-
-    # Zápis výsledků do CSV souboru
-    with open(output_file, 'w', newline='', encoding='utf-8') as file:
-        writer = csv.writer(file)
-        writer.writerow(['Obec', 'Registrovaní voliči', 'Vydané obálky', 'Platné hlasy', 'Strana', 'Počet hlasů'])
-        writer.writerows(results)
-
-    print(f"Výsledky byly úspěšně uloženy do souboru {output_file}")
+    file_name = sys.argv[2]
+    initial_soup = fetch_html(url)
+    data_rows, csv_header = process_municipality_data(initial_soup, base_url)
+    print(f"Saving data to file: {file_name}")
+    write_to_csv(data_rows, csv_header, file_name)
+    print("Data successfully saved. Process completed.")
 
 
-if __name__ == '__main__':
+def validate_inputs(base_url):
+    """
+    Validate command-line arguments to ensure they are correct.
+    Exits the program if arguments are invalid.
+    """
+    if len(sys.argv) != 3:
+        print("Incorrect number of arguments. Refer to the README and try again.")
+        exit()
+    elif base_url not in sys.argv[1]:
+        print("Invalid URL provided. Refer to the README for correct usage.")
+        exit()
+    elif ".csv" not in sys.argv[2]:
+        print("Invalid file name provided. Ensure it ends with '.csv'.")
+        exit()
+    else:
+        print(f"Fetching data from the URL: {sys.argv[1]}")
+
+
+def fetch_html(url):
+    """
+    Fetch the HTML content of the given URL and return a BeautifulSoup object.
+    """
+    response = requests.get(url)
+    return BeautifulSoup(response.text, "html.parser")
+
+
+def process_municipality_data(initial_soup, base_url):
+    """
+    Extract links to municipality data and process them to collect relevant information.
+    - Returns a list of rows (data) and a header (column names) for the CSV.
+    """
+    data_rows = []
+    csv_header = []
+    region_index = 0  # Track which region is being processed
+
+    # Find all municipality names
+    names = initial_soup.find_all('td', {'class': 'overflow_name'})
+
+    # Loop through all municipality rows
+    for municipality in initial_soup.find_all('td', {'class': 'cislo'}):
+        row = [municipality.text]  # Start row with the municipality code
+        row.append(names[region_index].text)  # Add municipality name
+
+        # Get link to detailed results
+        link = municipality.a['href']
+        detailed_soup = fetch_html(base_url + link)
+
+        # If processing the first region, create the header
+        if region_index == 0:
+            csv_header = generate_csv_header(detailed_soup)
+
+        # Collect data for the current municipality and append to the row
+        row.extend(extract_election_data(detailed_soup))
+        data_rows.append(row)
+        region_index += 1
+
+    return data_rows, csv_header
+
+
+def generate_csv_header(soup):
+    """
+    Generate the header (column names) for the CSV file based on the data structure.
+    """
+    header = ["Code", "Location", "Registered", "Envelopes", "Valid"]
+    for party in soup.find_all('td', {'class': 'overflow_name'}):
+        header.append(party.text)
+    return header
+
+
+def extract_election_data(soup):
+    """
+    Extract numerical data such as registered voters, envelopes, and votes.
+    - Returns a list of data values for a single municipality.
+    """
+    data = []
+
+    # Collect data for registered voters, envelopes, and valid votes
+    registered = soup.find('td', {'headers': 'sa2'}).text
+    data.append(clean_text(registered))
+    envelopes = soup.find('td', {'headers': 'sa5'}).text
+    data.append(clean_text(envelopes))
+    valid = soup.find('td', {'headers': 'sa6'}).text
+    data.append(clean_text(valid))
+
+    # Collect vote counts for each party
+    data.extend(collect_vote_counts(soup))
+
+    return data
+
+
+def collect_vote_counts(soup):
+    """
+    Collect the number of votes for each political party from the detailed results page.
+    - Returns a list of vote counts.
+    """
+    votes = []
+    table_index = 1
+    total_tables = len(soup.find_all('table'))
+
+    # Loop through vote tables and extract data
+    while table_index < total_tables:
+        vote_data = soup.find_all('td', {'headers': f't{table_index}sa2 t{table_index}sb3'})
+        for vote in vote_data:
+            votes.append(clean_text(vote.text))
+        table_index += 1
+
+    return votes
+
+
+def clean_text(text):
+    """
+    Clean the input text by removing unwanted characters such as non-breaking spaces.
+    """
+    return ''.join(text.split()) if "\xa0" in text else text
+
+
+def write_to_csv(data_rows, header, file_name):
+    """
+    Write the collected data into a CSV file.
+    """
+    with open(file_name, "w", encoding="utf-8", newline="") as csv_file:
+        writer = csv.writer(csv_file, dialect="excel")
+        writer.writerow(header)  # Write the header
+        writer.writerows(data_rows)  # Write the data rows
+
+
+if __name__ == "__main__":
     main()
